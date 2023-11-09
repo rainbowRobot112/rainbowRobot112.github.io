@@ -1,1 +1,1324 @@
-<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" ><generator uri="https://jekyllrb.com/" version="4.3.2">Jekyll</generator><link href="http://localhost:4000/feed.xml" rel="self" type="application/atom+xml" /><link href="http://localhost:4000/" rel="alternate" type="text/html" /><updated>2023-11-09T08:30:05+08:00</updated><id>http://localhost:4000/feed.xml</id><title type="html">dxyu的博客</title><subtitle></subtitle></feed>
+<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" ><generator uri="https://jekyllrb.com/" version="4.3.2">Jekyll</generator><link href="http://localhost:4000/feed.xml" rel="self" type="application/atom+xml" /><link href="http://localhost:4000/" rel="alternate" type="text/html" /><updated>2023-11-09T11:04:23+08:00</updated><id>http://localhost:4000/feed.xml</id><title type="html">dxyu的博客</title><subtitle></subtitle><entry><title type="html">内部类持有外部类引用的隐患</title><link href="http://localhost:4000/2023/11/08/%E5%86%85%E9%83%A8%E7%B1%BB%E6%8C%81%E6%9C%89%E5%A4%96%E9%83%A8%E7%B1%BB%E5%BC%95%E7%94%A8%E7%9A%84%E9%9A%90%E6%82%A3.html" rel="alternate" type="text/html" title="内部类持有外部类引用的隐患" /><published>2023-11-08T00:00:00+08:00</published><updated>2023-11-08T00:00:00+08:00</updated><id>http://localhost:4000/2023/11/08/%E5%86%85%E9%83%A8%E7%B1%BB%E6%8C%81%E6%9C%89%E5%A4%96%E9%83%A8%E7%B1%BB%E5%BC%95%E7%94%A8%E7%9A%84%E9%9A%90%E6%82%A3</id><content type="html" xml:base="http://localhost:4000/2023/11/08/%E5%86%85%E9%83%A8%E7%B1%BB%E6%8C%81%E6%9C%89%E5%A4%96%E9%83%A8%E7%B1%BB%E5%BC%95%E7%94%A8%E7%9A%84%E9%9A%90%E6%82%A3.html"><![CDATA[<h1 id="内部类持有外部类引用的隐患">内部类持有外部类引用的隐患</h1>
+
+<p>非静态内部类中引用外部类实例的非静态字段会导致内存泄漏的风险。因为匿名内部类一直持有外部类引用，存在引用关系是不会被GC回收，当持有外部类引用的非静态内部类处理耗时任务且越来越多的情况就会导致内存泄漏。</p>
+
+<h3 id="持有外部类-">持有外部类 <a href="#k3qfx" id="k3qfx"></a></h3>
+
+<p>非静态内部类，通过反射方法 clazz.getDeclaredFields() 获取内部类的所有属性时，如果存在外部类实例字段（非静态字段），内部类在将通过 this$0 来定义对外部类的引用，修饰为 final。</p>
+
+<p>1、包含内部类的 User 类</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>public class User {
+
+    public String id;
+    protected String firstname;
+    int age;
+    private String sex;
+
+    public class Name {
+        String lastname;
+        public String getName() {
+            return User.this.firstname + lastname;
+        }
+    }
+
+    public String getName() {
+        return Name.class.getName();
+    }
+}
+</code></pre></div></div>
+
+<p>2、测试内部类打印全部属性</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>package test.FieldTest;
+
+import java.lang.reflect.Field;
+
+public class Test {
+
+    public static void main(String[] args) {
+        fieldTest(User.Name.class);
+    }
+
+    public static void fieldTest(Class&lt;?&gt; clazz) {
+        Field[] fields = clazz.getDeclaredFields();
+        for (Field field : fields) {
+            System.out.println(field);
+        }
+    }
+}
+</code></pre></div></div>
+
+<p>输出</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>java.lang.String test.FieldTest.User$Name.lastname
+final test.FieldTest.User test.FieldTest.User$Name.this$0
+</code></pre></div></div>
+
+<p>查看内部类生成的 class 文件目录</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>$ ll
+total 9
+-rw-r--r-- 1 root 197121 1142 11月  8 09:53  Test.class
+-rw-r--r-- 1 root 197121  744 11月  8 09:53 'User$Name.class'
+-rw-r--r-- 1 root 197121  568 11月  8 09:53  User.class
+</code></pre></div></div>
+
+<p>编译 User$Name.class 文件</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>$ javap -c User\$Name.class
+Compiled from "User.java"
+public class test.FieldTest.User$Name {
+  java.lang.String lastname;
+
+  final test.FieldTest.User this$0;
+
+  public test.FieldTest.User$Name(test.FieldTest.User);
+    Code:
+       0: aload_0
+       1: aload_1
+       2: putfield      #1                  // Field this$0:Ltest/FieldTest/User;
+       5: aload_0
+       6: invokespecial #2                  // Method java/lang/Object."&lt;init&gt;":()V
+       9: return
+
+  public java.lang.String getName();
+    Code:
+       0: new           #3                  // class java/lang/StringBuilder
+       3: dup
+       4: invokespecial #4                  // Method java/lang/StringBuilder."&lt;init&gt;":()V
+       7: aload_0
+       8: getfield      #1                  // Field this$0:Ltest/FieldTest/User;
+      11: getfield      #5                  // Field test/FieldTest/User.firstname:Ljava/lang/String;
+      14: invokevirtual #6                  // Method java/lang/StringBuilder.append:(Ljava/lang/String;)Ljava/lang/StringBuilder;
+      17: aload_0
+      18: getfield      #7                  // Field lastname:Ljava/lang/String;
+      21: invokevirtual #6                  // Method java/lang/StringBuilder.append:(Ljava/lang/String;)Ljava/lang/StringBuilder;
+      24: invokevirtual #8                  // Method java/lang/StringBuilder.toString:()Ljava/lang/String;
+      27: areturn
+}
+</code></pre></div></div>
+
+<p>可以看到字节码文件中 User 被内部类 Name 引用，在 Name 构造方法 public test.FieldTest.User$Name(test.FieldTest.User) 阶段将外部类 User 引用导入自身。</p>
+
+<h3 id="处理办法-">处理办法 <a href="#ap4an" id="ap4an"></a></h3>
+
+<p>使用静态匿名内部类，内部类是静态的，要求外部类的变量也必须是静态的，静态变量存储在方法区，启动进程时加载，可以直接引用到需要的变量</p>]]></content><author><name></name></author><summary type="html"><![CDATA[内部类持有外部类引用的隐患]]></summary></entry><entry><title type="html">Spring Message Converter</title><link href="http://localhost:4000/2023/11/07/Spring-message-converter.html" rel="alternate" type="text/html" title="Spring Message Converter" /><published>2023-11-07T00:00:00+08:00</published><updated>2023-11-07T00:00:00+08:00</updated><id>http://localhost:4000/2023/11/07/Spring-message-converter</id><content type="html" xml:base="http://localhost:4000/2023/11/07/Spring-message-converter.html"><![CDATA[<h1 id="messageconverter">MessageConverter</h1>
+
+<p>web 开发中经常遇到请求体、响应体的格式转换，Spring Web 为我们提供 MessageConverter 消息转换器实现 java 数据类型、json/xml、自定协议类型的转化。</p>
+
+<p>流程：</p>
+
+<ol>
+  <li>Controller 内部方法上添加注解 @ResponseBody 或者请求参数上注解 @RequestBody</li>
+  <li>WebMvcConfigurationSupport#<strong>extendMessageConverters</strong> 方法设置自定义 MessageConverters 或者使用 Bean 对象设置消息转换</li>
+  <li>当处理请求或者响应时执行 AbstractMessageConverterMethodArgumentResolver#<strong>readWithMessageConverters</strong> 或者 AbstractMessageConverterMethodProcessor#<strong>writeWithMessageConverter</strong>，两个方法会遍历存在的 MessageConverter，并判断是否执行内部方法</li>
+  <li>获得 MessageConverter 消息转换器，检验 support 类型，如果通过则进行内容转化</li>
+  <li>获得请求对象或者转化对象为指定响应格式</li>
+</ol>
+
+<h2 id="接口介绍">接口介绍</h2>
+
+<p>继承 AbstractHttpMessageConverter 类实现对输入输出请求体控制，下面介绍待实现的方法</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>public abstract class AbstractHttpMessageConverter&lt;T&gt; implements HttpMessageConverter&lt;T&gt; {
+    // 判断支持的类型，传入 class 类型作为判断依据
+    protected abstract boolean supports(Class&lt;?&gt; clazz);
+​
+    // 满足读请求条件，执行实际请求读取逻辑
+    protected abstract T readInternal(Class&lt;? extends T&gt; clazz, HttpInputMessage inputMessage)
+            throws IOException, HttpMessageNotReadableException;
+​
+    // 满足写响应条件，执行实际响应写入逻辑
+    protected abstract void writeInternal(T t, HttpOutputMessage outputMessage)
+            throws IOException, HttpMessageNotWritableException;
+}
+</code></pre></div></div>
+
+<p>必须在 Controller 中存在 @ResponseBody 或者 @RequestBody 注解才能执行 ，否则将跳过 HttpMessageConverter 逻辑，比如只注解 @ResponseBody，则 readInternal 方法不执行。这是由于 Spring web 通过 AOP 监听到对应注解才会执行接下来的逻辑。</p>
+
+<h2 id="使用案例">使用案例</h2>
+
+<h3 id="controller-类">Controller 类</h3>
+
+<p>controller 类作为请求的入口和响应的出口，需特别注意必须加上对应注解才能启动 MessageConverters 执行消息转换，其中@RestController 包含了 @ResponseBody 注解。</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>@RestController
+@RequestMapping
+public class HelloController {
+​
+    @RequestMapping("/user")
+    public User user(@RequestBody User user) {
+        System.out.println(user.toString());
+        return new User("1", "1");
+    }
+}
+</code></pre></div></div>
+
+<p>User 对象</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>public class User {
+​
+    private String id;
+    private String name;
+​
+    public User() {
+    }
+​
+    public User(String id, String name) {
+        this.id = id;
+        this.name = name;
+    }
+​
+    public String getId() {
+        return id;
+    }
+​
+    public void setId(String id) {
+        this.id = id;
+    }
+​
+    public String getName() {
+        return name;
+    }
+​
+    public void setName(String name) {
+        this.name = name;
+    }
+​
+    @Override
+    public String toString() {
+        return "User{" +
+            "id='" + id + '\'' +
+            ", name='" + name + '\'' +
+            '}';
+    }
+}
+</code></pre></div></div>
+
+<h3 id="自定义-messageconverter">自定义 MessageConverter</h3>
+
+<p>自定义 MessageConverter，先定义支持的类型和转化条件，再设置请求 body 和响应 body 的转化逻辑</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>public class HttpMessageConvertor extends AbstractHttpMessageConverter&lt;User&gt; {
+​
+    private Gson gson;
+​
+    public HttpMessageConvertor(Gson gson) {
+        this.gson = gson;
+        setSupportedMediaTypes(new ArrayList&lt;&gt;(Collections.singletonList(MediaType.APPLICATION_JSON)));
+    }
+​
+    @Override
+    protected boolean supports(Class&lt;?&gt; clazz) {
+        return clazz == User.class;
+    }
+​
+    @Override
+    protected User readInternal(Class&lt;? extends User&gt; clazz, HttpInputMessage inputMessage) throws IOException, HttpMessageNotReadableException {
+        MediaType mediaType = inputMessage.getHeaders().getContentType();
+        if (mediaType != null &amp;&amp; mediaType.includes(MediaType.APPLICATION_JSON)) {
+            return gson.fromJson(new InputStreamReader(inputMessage.getBody()), User.class);
+        }
+        return new User("", "");
+    }
+​
+    @Override
+    protected void writeInternal(User user, HttpOutputMessage outputMessage) throws IOException, HttpMessageNotWritableException {
+        user.setName("3");
+        outputMessage.getBody().write(gson.toJson(user).getBytes(StandardCharsets.UTF_8));
+    }
+}
+</code></pre></div></div>
+
+<h3 id="messageconverter-注入">MessageConverter 注入</h3>
+
+<p>通过 Bean 的形式注入，也可以通过重写 extendMessageConverters 方法设置（特别是存在冲突 MessageConverter 时）</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>@Configuration
+public class Configuration {
+​
+    @Bean
+    public Gson getGson() {
+        return new Gson();
+    }
+​
+    @Bean
+    public HttpMessageConvertor webMvcConfigurer() {
+        return new HttpMessageConvertor(getGson());
+    }
+}
+</code></pre></div></div>
+
+<h2 id="注意">注意</h2>
+
+<p>自定义 MessageConverter 不要与其他启动的 MessageConverter 所支持 contentType 冲突，会导致自定义 MessageConverter 被跳过，如果出现冲突可以通过 webmvcconfig 手动调整顺序或者覆盖。默认开启的 MessageConverter 在可在 WebMvcConfigurationSupport#addDefaultHttpMessageConverters 方法中查看。</p>]]></content><author><name></name></author><summary type="html"><![CDATA[Springboot MessageConverter 消息转换使用]]></summary></entry><entry><title type="html">Springboot 全局异常原理</title><link href="http://localhost:4000/2023/11/05/Springboot-%E5%85%A8%E5%B1%80%E5%BC%82%E5%B8%B8%E5%8E%9F%E7%90%86.html" rel="alternate" type="text/html" title="Springboot 全局异常原理" /><published>2023-11-05T00:00:00+08:00</published><updated>2023-11-05T00:00:00+08:00</updated><id>http://localhost:4000/2023/11/05/Springboot%20%E5%85%A8%E5%B1%80%E5%BC%82%E5%B8%B8%E5%8E%9F%E7%90%86</id><content type="html" xml:base="http://localhost:4000/2023/11/05/Springboot-%E5%85%A8%E5%B1%80%E5%BC%82%E5%B8%B8%E5%8E%9F%E7%90%86.html"><![CDATA[<h1 id="springboot-全局异常">Springboot 全局异常</h1>
+
+<h2 id="web-异常捕获-">web 异常捕获 <a href="#rjta3" id="rjta3"></a></h2>
+
+<p>SpringBoot 通过载入的 HandlerExceptionResolver 决定接口捕获异常时如何处理，支持将异常包装为 ModelAndView 类型的响应。</p>
+
+<p>通过自定义继承接口 HandlerExceptionResolver 实现的抽象类 AbstractHandlerExceptionResolver 的方式，自行处理接口中的异常包装，源码中在 DispatcherServlet#processHandlerException 方法执行。AbstractHandlerExceptionResolver 继承 Order 接口，支持使用 @Order 编辑执行顺序</p>
+
+<p>通过实现 WebMvcConfigurer#extendHandlerExceptionResolvers 方法添加自定义的 HandlerExceptionResolver，或者使用 bean 注入（不用开启 @EnableWebMvc 注解，默认策略 autoConfiguration 载入）</p>
+
+<h3 id="接口介绍-">接口介绍 <a href="#q1dyq" id="q1dyq"></a></h3>
+
+<p>拦截异常类型可通过 setMappedHandlers 和 setMappedHandlerClasses 定义，处理逻辑在 doResolveException 方法自定义，如果类型与默认支持拦截异常的类型冲突，需手动处理（比如 Order 排序或者直接替换默认 HandlerExceptionResolver）</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>public abstract class AbstractHandlerExceptionResolver implements HandlerExceptionResolver, Ordered {
+
+    // 处理捕获异常封装的方法，返回接口响应信息
+    protected abstract ModelAndView doResolveException(HttpServletRequest request,
+			HttpServletResponse response, Object handler, Exception ex);
+}
+</code></pre></div></div>
+
+<h3 id="使用案例-">使用案例 <a href="#ngnxx" id="ngnxx"></a></h3>
+
+<p>下面例子自定义 ServletHandlerExceptionResolver 覆盖 DefaultHandlerExceptionResolver，防止异常发生时被 DefaultHandlerExceptionResolver 捕获异常</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>public class HttpHandlerExceptionResolver extends DefaultHandlerExceptionResolver {
+
+    public HttpHandlerExceptionResolver() {
+        setOrder(Ordered.HIGHEST_PRECEDENCE);
+    }
+
+    @Override
+    protected ModelAndView doResolveException(HttpServletRequest request, HttpServletResponse response,
+                                              Object handler, Exception ex) {
+
+        System.out.println("Throws ServletException: " + ex.getMessage()
+            + ", request uri: " + request.getRequestURI());
+        ex.printStackTrace();
+
+        ModelAndView mv = super.doResolveException(request, response, handler, ex);
+        if (mv == null) {
+            response.setStatus(HttpServletResponse.SC_EXPECTATION_FAILED);
+            return new ModelAndView();
+        }
+        return mv;
+    }
+
+    @NotNull
+    protected ModelAndView handleHttpRequestMethodNotSupported(HttpRequestMethodNotSupportedException ex,
+                                                               HttpServletRequest request, HttpServletResponse response,
+                                                               @Nullable Object handler) throws IOException {
+
+        String[] supportedMethods = ex.getSupportedMethods();
+        if (supportedMethods != null) {
+            response.setHeader("Allow", StringUtils.arrayToDelimitedString(supportedMethods, ", "));
+        }
+        response.setStatus(HttpServletResponse.SC_METHOD_NOT_ALLOWED);
+        response.getWriter().print(ex.getMessage());
+        return new ModelAndView();
+    }
+    @NotNull
+    protected ModelAndView handleHttpMediaTypeNotSupported(HttpMediaTypeNotSupportedException ex,
+                                                           HttpServletRequest request, HttpServletResponse response,
+                                                           @Nullable Object handler) throws IOException {
+
+        List&lt;MediaType&gt; mediaTypes = ex.getSupportedMediaTypes();
+        if (!CollectionUtils.isEmpty(mediaTypes)) {
+            response.setHeader("Accept", MediaType.toString(mediaTypes));
+            if (request.getMethod().equals("PATCH")) {
+                response.setHeader("Accept-Patch", MediaType.toString(mediaTypes));
+            }
+        }
+        response.setStatus(HttpServletResponse.SC_UNSUPPORTED_MEDIA_TYPE);
+        return new ModelAndView();
+    }
+    @NotNull
+    protected ModelAndView handleHttpMediaTypeNotAcceptable(HttpMediaTypeNotAcceptableException ex,
+                                                            HttpServletRequest request, HttpServletResponse response,
+                                                            @Nullable Object handler) throws IOException {
+
+        response.setStatus(HttpServletResponse.SC_NOT_ACCEPTABLE);
+        return new ModelAndView();
+    }
+    @NotNull
+    protected ModelAndView handleMissingPathVariable(MissingPathVariableException ex,
+                                                     HttpServletRequest request, HttpServletResponse response,
+                                                     @Nullable Object handler) throws IOException {
+
+        response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+        response.getWriter().print(ex.getMessage());
+        return new ModelAndView();
+    }
+    @NotNull
+    protected ModelAndView handleMissingServletRequestParameter(MissingServletRequestParameterException ex,
+                                                                HttpServletRequest request, HttpServletResponse response,
+                                                                @Nullable Object handler) throws IOException {
+
+        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+        response.getWriter().print(ex.getMessage());
+        return new ModelAndView();
+    }
+    @NotNull
+    protected ModelAndView handleServletRequestBindingException(ServletRequestBindingException ex,
+                                                                HttpServletRequest request, HttpServletResponse response,
+                                                                @Nullable Object handler) throws IOException {
+
+        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+        response.getWriter().print(ex.getMessage());
+        return new ModelAndView();
+    }
+    @NotNull
+    protected ModelAndView handleConversionNotSupported(ConversionNotSupportedException ex,
+                                                        HttpServletRequest request, HttpServletResponse response,
+                                                        @Nullable Object handler) throws IOException {
+
+        sendServerError(ex, request, response);
+        return new ModelAndView();
+    }
+    @NotNull
+    protected ModelAndView handleTypeMismatch(TypeMismatchException ex,
+                                              HttpServletRequest request, HttpServletResponse response,
+                                              @Nullable Object handler) throws IOException {
+
+        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+        return new ModelAndView();
+    }
+    @NotNull
+    protected ModelAndView handleHttpMessageNotReadable(HttpMessageNotReadableException ex,
+                                                        HttpServletRequest request, HttpServletResponse response,
+                                                        @Nullable Object handler) throws IOException {
+
+        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+        return new ModelAndView();
+    }
+    @NotNull
+    protected ModelAndView handleHttpMessageNotWritable(HttpMessageNotWritableException ex,
+                                                        HttpServletRequest request, HttpServletResponse response,
+                                                        @Nullable Object handler) throws IOException {
+
+        sendServerError(ex, request, response);
+        return new ModelAndView();
+    }
+    @NotNull
+    protected ModelAndView handleMethodArgumentNotValidException(MethodArgumentNotValidException ex,
+                                                                 HttpServletRequest request, HttpServletResponse response,
+                                                                 @Nullable Object handler) throws IOException {
+
+        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+        return new ModelAndView();
+    }
+    @NotNull
+    protected ModelAndView handleMissingServletRequestPartException(MissingServletRequestPartException ex,
+                                                                    HttpServletRequest request, HttpServletResponse response,
+                                                                    @Nullable Object handler) throws IOException {
+
+        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+        response.getWriter().print(ex.getMessage());
+        return new ModelAndView();
+    }
+    @NotNull
+    protected ModelAndView handleBindException(BindException ex, HttpServletRequest request,
+                                               HttpServletResponse response, @Nullable Object handler) throws IOException {
+
+        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+        return new ModelAndView();
+    }
+    @NotNull
+    protected ModelAndView handleNoHandlerFoundException(NoHandlerFoundException ex,
+                                                         HttpServletRequest request, HttpServletResponse response,
+                                                         @Nullable Object handler) throws IOException {
+
+        pageNotFoundLogger.warn(ex.getMessage());
+        response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+        return new ModelAndView();
+    }
+    @NotNull
+    protected ModelAndView handleAsyncRequestTimeoutException(AsyncRequestTimeoutException ex,
+                                                              HttpServletRequest request, HttpServletResponse response,
+                                                              @Nullable Object handler) throws IOException {
+        if (!response.isCommitted()) {
+            response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+        } else {
+            logger.warn("Async request timed out");
+        }
+        return new ModelAndView();
+    }
+    @NotNull
+    protected void sendServerError(Exception ex, HttpServletRequest request, HttpServletResponse response)
+        throws IOException {
+
+        request.setAttribute("javax.servlet.error.exception", ex);
+        response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+    }
+</code></pre></div></div>
+
+<p>注入自定义 ServletHandlerExceptionResolver</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>@Configuration
+public class Configuration implements WebMvcConfigurer {
+
+    @Override
+    public void extendHandlerExceptionResolvers(List&lt;HandlerExceptionResolver&gt; resolvers) {
+        for (int i = 0; i &lt; resolvers.size(); i++) {
+            if (resolvers.get(i) instanceof DefaultHandlerExceptionResolver) {
+                resolvers.set(i, new HttpHandlerExceptionResolver());
+                break;
+            }
+        }
+    }
+}
+</code></pre></div></div>
+
+<p>Controller 入口</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>@RestController
+@RequestMapping
+public class HelloController {
+
+    @RequestMapping("/ex")
+    public void ex() {
+        throw new RuntimeException();
+    }
+}
+</code></pre></div></div>
+
+<h3 id="注意-">注意 <a href="#p4md1" id="p4md1"></a></h3>
+
+<p>异常的类型是否会被排序靠前的 HandlerExceptionResolver 捕获到，默认的异常捕获器加载过程可见 WebMvcConfigurationSupport#addDefaultHandlerExceptionResolvers</p>
+
+<h2 id="接口异常捕获-">接口异常捕获 <a href="#rdip2" id="rdip2"></a></h2>
+
+<p>Springboot 中，可以通过 @ControllerAdvice 开启全局异常处理，监听所有 Controller 接口，而异常则需要自定义方法并加上 @ExceptionHandler 注解并在注解参数上定义捕获异常的类型即可对捕获的异常进行统一的处理。</p>
+
+<p>本质是通过 AOP 和事务机制拦截和处理异常，@ControllerAdvice 注解本质HandlerMethodReturnValueHandler 的实现，@ExceptionHandler 底层实现还是通过 HandlerExceptionResolver 捕获异常并处理，相比自定义 HandlerExceptionResolver 的实现方式更为快捷。</p>
+
+<h2 id="使用案例--1">使用案例 <a href="#qh61t" id="qh61t"></a></h2>
+
+<p>定义全局拦截器，将应用内部自定义异常类型捕获并处理</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>@RestControllerAdvice(annotations = Controller.class)
+public class RestApiExceptionHandler {
+
+    @ExceptionHandler({Throwable.class})
+    public ResponseEntity&lt;Object&gt; handleException(Exception ex, HandlerMethod handlerMethod, HttpServletRequest request) {
+        System.out.println("Exception Found in Mapping Method:" + handlerMethod
+                + " and URL:" + request.getRequestURI(), ex);
+        if (ex instanceof RestApiException) {
+            try {
+                return ResponseEntity.ok()
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(((RestApiException) ex).toJSONString());
+            } catch (IOException e) {
+                System.out.println("Exception Found in ExceptionHandler");
+                e.printStackTrace();
+            }
+        }
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+    }
+}
+</code></pre></div></div>]]></content><author><name></name></author><summary type="html"><![CDATA[Springboot 全局异常机制使用]]></summary></entry><entry><title type="html">Spring Requestbodyadvice 与 Responsebodyadvice 使用与原理</title><link href="http://localhost:4000/2023/11/03/Spring-RequestBodyAdvice-%E4%B8%8E-ResponseBodyAdvice-%E4%BD%BF%E7%94%A8%E4%B8%8E%E5%8E%9F%E7%90%86.html" rel="alternate" type="text/html" title="Spring Requestbodyadvice 与 Responsebodyadvice 使用与原理" /><published>2023-11-03T00:00:00+08:00</published><updated>2023-11-03T00:00:00+08:00</updated><id>http://localhost:4000/2023/11/03/Spring-RequestBodyAdvice-%E4%B8%8E-ResponseBodyAdvice-%E4%BD%BF%E7%94%A8%E4%B8%8E%E5%8E%9F%E7%90%86</id><content type="html" xml:base="http://localhost:4000/2023/11/03/Spring-RequestBodyAdvice-%E4%B8%8E-ResponseBodyAdvice-%E4%BD%BF%E7%94%A8%E4%B8%8E%E5%8E%9F%E7%90%86.html"><![CDATA[<h1 id="requestbodyadvice-与-responsebodyadvice">RequestBodyAdvice 与 ResponseBodyAdvice</h1>
+
+<p>SpringBoot 内部可自定义请求通知和响应通知，RequestBodyAdviceAdapter 和 ResponseBodyAdvice&lt;T&gt; 通过通知的方式对请求和响应增强，比如请求响应的日志打印，注意生效逻辑与 MessageConverter 相同，RequestBodyAdviceAdapter 和 ResponseBodyAdvice 都根据响应的类型生效（类型 Object + support() 返回 true，可对全部请求响应生效）</p>
+
+<h2 id="接口介绍-">接口介绍 <a href="#zciy0" id="zciy0"></a></h2>
+
+<p>RequestBodyAdviceAdapter 抽象类继承自 RequestBodyAdvice 接口，RequestBodyAdviceAdapter 实现部分方法的默认返回，继承它做正式实现，案例见后面部分，这里介绍 RequestBodyAdvice 接口</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>public interface RequestBodyAdvice {
+
+	// 判断是否满足监听条件，首要执行
+	boolean supports(MethodParameter methodParameter, Type targetType,
+			Class&lt;? extends HttpMessageConverter&lt;?&gt;&gt; converterType);
+
+	// body 为空时执行
+	Object handleEmptyBody(Object body, HttpInputMessage inputMessage, MethodParameter parameter,
+			Type targetType, Class&lt;? extends HttpMessageConverter&lt;?&gt;&gt; converterType);
+
+        // 在 body 被读取或者转化之前执行
+	HttpInputMessage beforeBodyRead(HttpInputMessage inputMessage, MethodParameter parameter,
+			Type targetType, Class&lt;? extends HttpMessageConverter&lt;?&gt;&gt; converterType) throws IOException;
+
+	// 在 body 被读取或者转化之后执行
+	Object afterBodyRead(Object body, HttpInputMessage inputMessage, MethodParameter parameter,
+			Type targetType, Class&lt;? extends HttpMessageConverter&lt;?&gt;&gt; converterType);
+</code></pre></div></div>
+
+<p>ResponseBodyAdvice&lt;T&gt; 接口</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>public interface ResponseBodyAdvice&lt;T&gt; {
+
+	// 是否满足监听条件
+	boolean supports(MethodParameter returnType, Class&lt;? extends HttpMessageConverter&lt;?&gt;&gt; converterType);
+
+        // 当被 MessageConverter 选中后（还没执行 MessageConverter 中方法）
+        // 在 body 被写入网卡前执行
+	T beforeBodyWrite(T body, MethodParameter returnType, MediaType selectedContentType,
+			Class&lt;? extends HttpMessageConverter&lt;?&gt;&gt; selectedConverterType,
+			ServerHttpRequest request, ServerHttpResponse response);
+
+}
+</code></pre></div></div>
+
+<h2 id="使用案例-">使用案例 <a href="#ke4h0" id="ke4h0"></a></h2>
+
+<h3 id="日志打印逻辑代码-">日志打印逻辑代码 <a href="#beqjv" id="beqjv"></a></h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>@RestControllerAdvice
+public class HeadersLogAdvice extends RequestBodyAdviceAdapter implements ResponseBodyAdvice&lt;Object&gt;, HandlerInterceptor {
+
+    private static final String HTTP_HEADERS_LOG_CONTEXT = "httpHeadersLogContext";
+
+    // HandlerInterceptor 记录当前请求统计并设置到 requestAttributes
+    @Override
+    public boolean preHandle(HttpServletRequest request,
+                             HttpServletResponse response,
+                             Object handler) throws Exception {
+        HttpHeadersLogContext httpHeadersLogContext = new HttpHeadersLogContext();
+        // 设置初始值
+        httpHeadersLogContext.updateReadStartTime();
+        httpHeadersLogContext.updateReadEndTime();
+        RequestAttributes requestAttributes = RequestContextHolder.currentRequestAttributes();
+        requestAttributes.setAttribute(HTTP_HEADERS_LOG_CONTEXT, httpHeadersLogContext, SCOPE_REQUEST);
+        return true;
+    }
+
+    // RequestBodyAdviceAdapter 相关方法实现
+    // 全局支持, 这里要返回 true
+    @Override
+    public boolean supports(MethodParameter methodParameter,
+                            Type targetType,
+                            Class&lt;? extends HttpMessageConverter&lt;?&gt;&gt; converterType) {
+        return true;
+    }
+
+    // 读取 request body 后更新结束时间
+    @Override
+    public Object afterBodyRead(Object requestBody, HttpInputMessage inputMessage,
+                                MethodParameter parameter, Type targetType,
+                                Class&lt;? extends HttpMessageConverter&lt;?&gt;&gt; converterType) {
+        HttpHeadersLogContext httpHeadersLogContext = getHttpHeadersLogContext();
+        if (httpHeadersLogContext != null) {
+            httpHeadersLogContext.updateReadEndTime();
+        }
+        return requestBody;
+    }
+
+    // RequestBodyAdviceAdapter 相关方法实现
+    // 全局支持, 这里要返回 true
+    @Override
+    public boolean supports(MethodParameter returnType,
+                            Class&lt;? extends HttpMessageConverter&lt;?&gt;&gt; converterType) {
+        return true;
+    }
+
+    // 记录 response 写之前的时间
+    @Override
+    public Object beforeBodyWrite(Object responseBody,
+                                  MethodParameter returnType, MediaType selectedContentType,
+                                  Class&lt;? extends HttpMessageConverter&lt;?&gt;&gt; selectedConverterType,
+                                  ServerHttpRequest request, ServerHttpResponse response) {
+        HttpHeadersLogContext httpHeadersLogContext = getHttpHeadersLogContext();
+        if (httpHeadersLogContext != null) {
+            httpHeadersLogContext.updateWriteStartTime();
+        }
+        return responseBody;
+    }
+
+    // 响应结束, 打印请求响应情况
+    @Override
+    public void afterCompletion(HttpServletRequest request, HttpServletResponse response,
+                                Object handler, Exception ex) throws Exception {
+        StringBuilder logBuilder = new StringBuilder();
+        logBuilder.append("Http Log:[");
+        logBuilder.append("Client IP:").append(request.getRemoteAddr())
+                .append(",Request URI:").append(request.getRequestURI())
+                .append(",Status Code:").append(response.getStatus())
+                .append(",");
+        appendRequestHeaders(request, logBuilder);
+        appendResponseHeaders(response, logBuilder);
+
+        HttpHeadersLogContext httpHeadersLogContext = getHttpHeadersLogContext();
+        if (httpHeadersLogContext != null) {
+            if (ex != null) {
+                logBuilder.append(",Exception:").append(ex.getMessage());
+            }
+            long readOpTime = httpHeadersLogContext.getReadEnd() - httpHeadersLogContext.getReadStart();
+            long apiHandleOpTime = Math.max(httpHeadersLogContext.getWriteStart() - httpHeadersLogContext.getReadEnd(), 0);
+            // 当前时间作为响应写完成后的时间
+            long writeOpTime = httpHeadersLogContext.getWriteStart() &gt; 0
+                    ? System.currentTimeMillis() - httpHeadersLogContext.getWriteStart() : 0;
+            // 总的时间消耗
+            long totalOpTime = readOpTime + apiHandleOpTime + writeOpTime;
+            totalOpTime = totalOpTime &lt;= 0 ? System.currentTimeMillis() - httpHeadersLogContext.getReadStart() : totalOpTime;
+            logBuilder.append(",ReadOpTime:").append(readOpTime).append("ms")
+                    .append(",ApiHandleOpTime:").append(apiHandleOpTime).append("ms")
+                    .append(",WriteOpTime:").append(writeOpTime).append("ms")
+                    .append(",TotalOpTime:").append(totalOpTime).append("ms");
+
+            RequestAttributes requestAttributes = RequestContextHolder.currentRequestAttributes();
+            requestAttributes.removeAttribute(HTTP_HEADERS_LOG_CONTEXT, SCOPE_REQUEST);
+        }
+        logBuilder.append("]");
+        if (ex != null) {
+            System.out.println(logBuilder.toString());
+            ex.printStackTrace();
+        } else {
+            System.out.println(logBuilder.toString());
+        }
+    }
+
+    private void appendRequestHeaders(HttpServletRequest request, StringBuilder logBuilder) {
+            logBuilder.append(",Request Headers:[");
+            Enumeration&lt;String&gt; headers = request.getHeaderNames();
+            while (headers.hasMoreElements()) {
+                String header = headers.nextElement();
+                logBuilder.append(header).append("=").append(request.getHeader(header)).append(",");
+            }
+            logBuilder.append("]");
+    }
+
+    private void appendResponseHeaders(HttpServletResponse response, StringBuilder logBuilder) {
+        logBuilder.append(",Response Headers:[");
+        for (String header : response.getHeaderNames()) {
+            logBuilder.append(header).append("=").append(response.getHeader(header)).append(",");
+        }
+        logBuilder.append("]");
+    }
+
+    private HttpHeadersLogContext getHttpHeadersLogContext() {
+        RequestAttributes requestAttributes = RequestContextHolder.currentRequestAttributes();
+        return (HttpHeadersLogContext) requestAttributes.getAttribute(HTTP_HEADERS_LOG_CONTEXT, SCOPE_REQUEST);
+    }
+
+    private static class HttpHeadersLogContext {
+        long readStart;
+        long readEnd;
+        long writeStart;
+
+        HttpHeadersLogContext() {
+        }
+
+        public long getReadStart() {
+            return readStart;
+        }
+
+        public long getReadEnd() {
+            return readEnd;
+        }
+
+        public long getWriteStart() {
+            return writeStart;
+        }
+
+        public void updateReadStartTime() {
+            readStart = System.currentTimeMillis();
+        }
+
+        public void updateReadEndTime() {
+            readEnd = System.currentTimeMillis();
+        }
+
+        public void updateWriteStartTime() {
+            writeStart = System.currentTimeMillis();
+        }
+    }
+}
+</code></pre></div></div>
+
+<h2 id="注意-">注意 <a href="#vk7ew" id="vk7ew"></a></h2>
+
+<p>RequestBodyAdviceAdapter 和 ResponseBodyAdvice 与 MessageConverter 有很强的联系。RequestBodyAdviceAdapter 的 beforeBodyRead 和 afterBodyRead 分别执行在 MessageConverter 读请求之前和之后，而 ResponseBodyAdvice 的 beforeBodyWrite 方法执行在 MessageConverter 响应写之前。</p>]]></content><author><name></name></author><summary type="html"><![CDATA[Springboot RequestBodyAdvice 与 ResponseBodyAdvice 监听请求/响应]]></summary></entry><entry><title type="html">Spring Cloud Openfegin 使用与源码解析</title><link href="http://localhost:4000/2023/11/02/Spring-Cloud-openFegin-%E4%BD%BF%E7%94%A8%E4%B8%8E%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90.html" rel="alternate" type="text/html" title="Spring Cloud Openfegin 使用与源码解析" /><published>2023-11-02T00:00:00+08:00</published><updated>2023-11-02T00:00:00+08:00</updated><id>http://localhost:4000/2023/11/02/Spring-Cloud-openFegin-%E4%BD%BF%E7%94%A8%E4%B8%8E%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90</id><content type="html" xml:base="http://localhost:4000/2023/11/02/Spring-Cloud-openFegin-%E4%BD%BF%E7%94%A8%E4%B8%8E%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90.html"><![CDATA[<h1 id="spring-cloud-openfegin">Spring Cloud openFegin</h1>
+
+<p>实现 Http 请求通常需要取得 HttpClient 并设置请求的头信息和请求体，还要获取请求的 url，特别是在微服务环境下通常包含负载均衡、熔断机制，整个请求编写过程会显得很繁琐。</p>
+
+<p>Feign 组件作为一款 HttpClient 绑定器，在 Spring Cloud 微服务调用中提供微服务间的声明式调用，内部集成负载均衡和断路器组件，通过注解的方式声明服务调用，非常易用。</p>
+
+<h2 id="使用案例-">使用案例 <a href="#wxafq" id="wxafq"></a></h2>
+
+<p>1、引入依赖，feign 是 Spring Cloud 默认支持的组件，在父项目依赖中声明版本为 2021.0.4，子项目可简单依赖，feign 对应版本为 3.1.4</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>&lt;dependency&gt;
+    &lt;groupId&gt;org.springframework.cloud&lt;/groupId&gt;
+    &lt;artifactId&gt;spring-cloud-starter-openfeign&lt;/artifactId&gt;
+&lt;/dependency&gt;
+</code></pre></div></div>
+
+<p>2、定义 feign 接口，通过 @FeignClient 来实现要调用的微服务接口</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>@FeignClient(name = "user-service", fallback = UserServiceClient.UserServiceFallback.class)
+public interface UserServiceClient {
+
+    @GetMapping(value = "/user/getUser")
+    String print();
+
+    class UserServiceFallback implements UserServiceClient {
+        @Override
+        public String print() {
+            return "Service User failed! Trigger Fallback";
+        }
+    }
+}
+</code></pre></div></div>
+
+<p>3、配置 feign 参数，设置默认全局连接超时时间</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>server:
+  port: 9011 # 端口
+spring:
+  application:
+    name: find-service # 服务名称
+  cloud:
+    nacos:
+      server-addr: localhost:8848 # nacos地址
+    loadbalancer:
+      nacos:
+        enabled: true
+
+
+feign:
+  client:
+    config:
+      default:
+        connectionTimeout: 5000
+        readTimeout: 5000
+</code></pre></div></div>
+
+<p>default 表示默认全局，支持按照服务名分别设置参数</p>
+
+<h2 id="工作原理-">工作原理 <a href="#gpgnv" id="gpgnv"></a></h2>
+
+<h3 id="支持配置-">支持配置 <a href="#rquii" id="rquii"></a></h3>
+
+<p>支持的配置详情在 FeignClientProperties.FeignClientConfiguration 中定义</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>public static class FeignClientConfiguration {
+
+        // 打印日志级别
+        // 支持 NONE：不打印日志
+        //     BASIC：只打印请求、url、响应状态码和执行时间
+        //     HEADERS：打印基本信息，包含请求和响应头
+        //     FULL：打印头、body、请求和响应的元数据
+		private Logger.Level loggerLevel;
+
+        // 连接超时时间
+		private Integer connectTimeout;
+
+        // 读信息超时时间
+		private Integer readTimeout;
+
+        //  重试策略
+		private Class&lt;Retryer&gt; retryer;
+
+        // 非2xx响应码时的反编码策略
+		private Class&lt;ErrorDecoder&gt; errorDecoder;
+
+        // 请求拦截器
+		private List&lt;Class&lt;RequestInterceptor&gt;&gt; requestInterceptors;
+
+        // 默认请求头
+		private Map&lt;String, Collection&lt;String&gt;&gt; defaultRequestHeaders;
+
+        // 默认请求参数
+		private Map&lt;String, Collection&lt;String&gt;&gt; defaultQueryParameters;
+
+        // 反编码 404 支持
+		private Boolean decode404;
+
+        // 反编码逻辑
+		private Class&lt;Decoder&gt; decoder;
+
+        // 编码逻辑
+		private Class&lt;Encoder&gt; encoder;
+
+        // 定义元数据的注解和值的验证
+		private Class&lt;Contract&gt; contract;
+
+        // 发生异常时的策略，默认抛出 RetryableException 异常
+        // 开启 UNWRAP 后抛出 RetryableException 包装前的异常
+		private ExceptionPropagationPolicy exceptionPropagationPolicy;
+
+        // 定制 feign 部分核心功能，详情见 Capability 接口
+		private List&lt;Class&lt;Capability&gt;&gt; capabilities;
+
+        // 请求参数编码逻辑，支持单个请求参数编码
+		private Class&lt;QueryMapEncoder&gt; queryMapEncoder;
+
+        // 统计功能支持，默认 true
+		private MetricsProperties metrics;
+
+        // 重定向支持，默认 true
+		private Boolean followRedirects;
+
+        ......
+}
+</code></pre></div></div>
+
+<p>默认配置可查看 FeignClientFactoryBean#configureUsingProperties</p>
+
+<p>官方文档中给出全配置项如下</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>feign:
+    client:
+        config:
+            feignName:
+                connectTimeout: 5000
+                readTimeout: 5000
+                loggerLevel: full
+                errorDecoder: com.example.SimpleErrorDecoder
+                retryer: com.example.SimpleRetryer
+                defaultQueryParameters:
+                    query: queryValue
+                defaultRequestHeaders:
+                    header: headerValue
+                requestInterceptors:
+                    - com.example.FooRequestInterceptor
+                    - com.example.BarRequestInterceptor
+                decode404: false
+                encoder: com.example.SimpleEncoder
+                decoder: com.example.SimpleDecoder
+                contract: com.example.SimpleContract
+                capabilities:
+                    - com.example.FooCapability
+                    - com.example.BarCapability
+                queryMapEncoder: com.example.SimpleQueryMapEncoder
+                metrics.enabled: false
+</code></pre></div></div>
+
+<p>FeignClientConfiguration 相比官方给出配置项少了 capabilities 相关配置，该配置的作用是统计可视相关的定制化需求，默认提供 MicrometerCapability（需满足 <a href="https://docs.spring.io/spring-cloud-openfeign/docs/3.1.8/reference/html/#feign-metrics">feign-metrics 条件</a>），如果开启 @EnableCaching 注解，CachingCapability 会注册到使用 @Cache* 注解的 Fegin 客户端接口中。</p>
+
+<p>Fegin 支持请求/响应压缩，如果考虑 <a href="https://docs.spring.io/spring-cloud-openfeign/docs/3.1.8/reference/html/#feign-requestresponse-compression">Fegin 请求/响应支持 GZIP 压缩</a>，可以开启下面配置</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>feign.compression.request.enabled=true
+feign.compression.response.enabled=true
+</code></pre></div></div>
+
+<p>压缩支持通过 media 类型和请求长度过滤</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>feign.compression.request.enabled=true
+feign.compression.request.mime-types=text/xml,application/xml,application/json
+feign.compression.request.min-request-size=2048
+</code></pre></div></div>
+
+<p>注意 okHttpClient 的压缩逻辑需要自己通过 okHttpClient 的拦截器实现，可参考<a href="https://github.com/square/okhttp/blob/7135628c645892faf1a48a8cff464e0ed4ad88cb/samples/guide/src/main/java/okhttp3/recipes/RequestBodyCompression.java">RequestBodyCompression</a>。</p>
+
+<h3 id="enablefeignclients-">@EnableFeignClients <a href="#xjgi8" id="xjgi8"></a></h3>
+
+<p>项目启动类开启 @EnableFeignClients 注解后，组件开启 feign 客户端类扫描，自动装配 fegin 相关的功能</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>@Retention(RetentionPolicy.RUNTIME)
+@Target(ElementType.TYPE)
+@Documented
+@Import(FeignClientsRegistrar.class)
+public @interface EnableFeignClients {
+
+    // 定义扫描包名
+	String[] value() default {};
+
+	// 同上
+	String[] basePackages() default {};
+
+	// 定义扫描类
+	Class&lt;?&gt;[] basePackageClasses() default {};
+
+	// 定制配置文件，参考 FeignClientsConfiguration
+	Class&lt;?&gt;[] defaultConfiguration() default {};
+
+	// 扫描的 @FeignClient 所在类
+	Class&lt;?&gt;[] clients() default {};
+
+}
+</code></pre></div></div>
+
+<p>可见注解有 @Import 注解，FeignClientsRegistrar 在包扫描前提前注入的 bean，方便在后续被调用使用。</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>class FeignClientsRegistrar implements ImportBeanDefinitionRegistrar, ResourceLoaderAware, EnvironmentAware {
+    ......
+    @Override
+	public void registerBeanDefinitions(AnnotationMetadata metadata, BeanDefinitionRegistry registry) {
+		registerDefaultConfiguration(metadata, registry);
+		registerFeignClients(metadata, registry);
+	}
+    ......
+}
+</code></pre></div></div>
+
+<p>FeignClientsRegistrar 类继承自 ImportBeanDefinitionRegistrar，ImportBeanDefinitionRegistrar 是 Spring 提供的动态刷新的扩展点，每次执行 Spring 重新加载 AbstractApplicationContext#refresh 方法时都会执行继承和实现 ImportBeanDefinitionRegistrar#registerBeanDefinitions 方法，达到动态更新的效果。</p>
+
+<h3 id="feignclient-">@FeignClient <a href="#q6s0p" id="q6s0p"></a></h3>
+
+<p>配置 @FeignClient 的类会被扫描到 FeignClientsRegistrar 扫描到</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>@Target(ElementType.TYPE)
+@Retention(RetentionPolicy.RUNTIME)
+@Documented
+@Inherited
+public @interface FeignClient {
+
+	// 定义 service id
+	@AliasFor("name")
+	String value() default "";
+
+    // 定义 bean 的名称，注意不是服务名
+	String contextId() default "";
+
+	// 定义 service id
+	@AliasFor("value")
+	String name() default "";
+
+	/**
+	 * @return the &lt;code&gt;@Qualifier&lt;/code&gt; value for the feign client.
+	 * @deprecated in favour of {@link #qualifiers()}.
+	 *
+	 * If both {@link #qualifier()} and {@link #qualifiers()} are present, we will use the
+	 * latter, unless the array returned by {@link #qualifiers()} is empty or only
+	 * contains &lt;code&gt;null&lt;/code&gt; or whitespace values, in which case we'll fall back
+	 * first to {@link #qualifier()} and, if that's also not present, to the default =
+	 * &lt;code&gt;contextId + "FeignClient"&lt;/code&gt;.
+	 */
+	@Deprecated
+	String qualifier() default "";
+
+	/**
+	 * @return the &lt;code&gt;@Qualifiers&lt;/code&gt; value for the feign client.
+	 *
+	 * If both {@link #qualifier()} and {@link #qualifiers()} are present, we will use the
+	 * latter, unless the array returned by {@link #qualifiers()} is empty or only
+	 * contains &lt;code&gt;null&lt;/code&gt; or whitespace values, in which case we'll fall back
+	 * first to {@link #qualifier()} and, if that's also not present, to the default =
+	 * &lt;code&gt;contextId + "FeignClient"&lt;/code&gt;.
+	 */
+	String[] qualifiers() default {};
+
+	// 定义 url，如果定义则不过负载均衡
+	String url() default "";
+
+	// 开启 404 反编码
+	boolean decode404() default false;
+
+	// 自定义配置类
+	Class&lt;?&gt;[] configuration() default {};
+
+	// 自定义失败回退逻辑，必须可验证的 spring bean
+	Class&lt;?&gt; fallback() default void.class;
+
+	// 定义回滚工厂，必须可验证的 spring bean
+	Class&lt;?&gt; fallbackFactory() default void.class;
+
+	// 定义路径前缀
+	String path() default "";
+
+	// 将代理标记为主 bean
+	boolean primary() default true;
+
+}
+</code></pre></div></div>
+
+<p>其次是加载扫描到 @FeignClient 注解的逻辑，执行 registerDefaultConfiguration 和 registerFeignClients 方法，将扫描到 @FeignClient 的类通过 FeignClientFactoryBean 解析为 BeanDefinition 并注入 Spring 容器中，FeignClientFactoryBean 逻辑</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>public class FeignClientFactoryBean
+		implements FactoryBean&lt;Object&gt;, InitializingBean, ApplicationContextAware, BeanFactoryAware {
+            @Override
+	public Object getObject() {
+		return getTarget();
+	}
+
+	/**
+	 * @param &lt;T&gt; the target type of the Feign client
+	 * @return a {@link Feign} client created with the specified data and the context
+	 * information
+	 */
+	&lt;T&gt; T getTarget() {
+		FeignContext context = beanFactory != null ? beanFactory.getBean(FeignContext.class)
+				: applicationContext.getBean(FeignContext.class);
+		Feign.Builder builder = feign(context);
+
+		if (!StringUtils.hasText(url)) {
+
+			if (LOG.isInfoEnabled()) {
+				LOG.info("For '" + name + "' URL not provided. Will try picking an instance via load-balancing.");
+			}
+			if (!name.startsWith("http")) {
+				url = "http://" + name;
+			}
+			else {
+				url = name;
+			}
+			url += cleanPath();
+			return (T) loadBalance(builder, context, new HardCodedTarget&lt;&gt;(type, name, url));
+		}
+		if (StringUtils.hasText(url) &amp;&amp; !url.startsWith("http")) {
+			url = "http://" + url;
+		}
+		String url = this.url + cleanPath();
+		Client client = getOptional(context, Client.class);
+		if (client != null) {
+			if (client instanceof FeignBlockingLoadBalancerClient) {
+				// not load balancing because we have a url,
+				// but Spring Cloud LoadBalancer is on the classpath, so unwrap
+				client = ((FeignBlockingLoadBalancerClient) client).getDelegate();
+			}
+			if (client instanceof RetryableFeignBlockingLoadBalancerClient) {
+				// not load balancing because we have a url,
+				// but Spring Cloud LoadBalancer is on the classpath, so unwrap
+				client = ((RetryableFeignBlockingLoadBalancerClient) client).getDelegate();
+			}
+			builder.client(client);
+		}
+
+		applyBuildCustomizers(context, builder);
+
+		Targeter targeter = get(context, Targeter.class);
+		return (T) targeter.target(this, builder, context, new HardCodedTarget&lt;&gt;(type, name, url));
+	}
+
+    protected &lt;T&gt; T loadBalance(Feign.Builder builder, FeignContext context, HardCodedTarget&lt;T&gt; target) {
+		Client client = getOptional(context, Client.class);
+		if (client != null) {
+			builder.client(client);
+			applyBuildCustomizers(context, builder);
+			Targeter targeter = get(context, Targeter.class);
+			return targeter.target(this, builder, context, target);
+		}
+
+		throw new IllegalStateException(
+				"No Feign Client for loadBalancing defined. Did you forget to include spring-cloud-starter-loadbalancer?");
+	}
+}
+</code></pre></div></div>
+
+<p>当 url 参数不存在时调用 loadBalance 逻辑通过注册中心的服务列表进行负载均衡获取当前调用的服务 url。</p>
+
+<p>如果配置 url 则直接通过 url 地址访问接口，Spring Cloud openFeign 目前只能执行同步 http 请求，暂不支持异步 http 请求。</p>
+
+<p>Feigin 支持的 Http 客户端有 okHttp、HttpClient、HttpClient5 以及内部 DefaultClient。如果要支持 ssl 认证等功能，比如 DefaultFeignLoadBalancerConfiguration，需自己实现注入 Client 时设置所需参数。</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>@Configuration(proxyBeanMethods = false)
+@EnableConfigurationProperties(LoadBalancerClientsProperties.class)
+class DefaultFeignLoadBalancerConfiguration {
+
+	@Bean
+	@ConditionalOnMissingBean
+	@Conditional(OnRetryNotEnabledCondition.class)
+	public Client feignClient(LoadBalancerClient loadBalancerClient,
+			LoadBalancerClientFactory loadBalancerClientFactory) {
+		return new FeignBlockingLoadBalancerClient(new Client.Default(null, null), loadBalancerClient,
+				loadBalancerClientFactory);
+	}
+
+	@Bean
+	@ConditionalOnMissingBean
+	@ConditionalOnClass(name = "org.springframework.retry.support.RetryTemplate")
+	@ConditionalOnBean(LoadBalancedRetryFactory.class)
+	@ConditionalOnProperty(value = "spring.cloud.loadbalancer.retry.enabled", havingValue = "true",
+			matchIfMissing = true)
+	public Client feignRetryClient(LoadBalancerClient loadBalancerClient,
+			LoadBalancedRetryFactory loadBalancedRetryFactory, LoadBalancerClientFactory loadBalancerClientFactory) {
+		return new RetryableFeignBlockingLoadBalancerClient(new Client.Default(null, null), loadBalancerClient,
+				loadBalancedRetryFactory, loadBalancerClientFactory);
+	}
+
+}
+</code></pre></div></div>
+
+<p>如果启动 loadbalance，fegin 在 FeignBlockingLoadBalancerClient 在自动注入阶段会连同 LoadBalancerClient、LoadBalancerClientFactory 依赖进行注入。并在 FeignClientFactoryBean#getOptional 方法执行时响应注入的 Client，实际为 FeignBlockingLoadBalancerClient。</p>
+
+<p>LoadBalancer 策略只有两种轮询（默认）、随机，如果需要实现额外的负载均衡算法需继承 ReactorServiceInstanceLoadBalancer 自行定义，注入方式可参考 LoadBalancerClientConfiguration。</p>
+
+<p>通过注入的 Targeter 类的注入断路器，见 FeignClientFactoryBean#loadBalance 中包含获取 Targeter 逻辑，这里加断路器到 client。对应 Configuration</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>@Configuration(proxyBeanMethods = false)
+@ConditionalOnClass(Feign.class)
+@EnableConfigurationProperties({ FeignClientProperties.class, FeignHttpClientProperties.class,
+		FeignEncoderProperties.class })
+public class FeignAutoConfiguration {
+        ......
+
+		@Bean
+		@ConditionalOnMissingBean
+		@ConditionalOnBean(CircuitBreakerFactory.class)
+		public Targeter circuitBreakerFeignTargeter(CircuitBreakerFactory circuitBreakerFactory,
+				@Value("${feign.circuitbreaker.group.enabled:false}") boolean circuitBreakerGroupEnabled,
+				CircuitBreakerNameResolver circuitBreakerNameResolver) {
+			return new FeignCircuitBreakerTargeter(circuitBreakerFactory, circuitBreakerGroupEnabled,
+					circuitBreakerNameResolver);
+		}
+        ......
+}
+</code></pre></div></div>
+
+<p>ReflectiveFeign 使用动态代理的方式增强原本接口的方法构建 rpc 远程调用机制</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>public class ReflectiveFeign extends Feign {
+    ......
+    @Override
+  public &lt;T&gt; T newInstance(Target&lt;T&gt; target) {
+    Map&lt;String, MethodHandler&gt; nameToHandler = targetToHandlersByName.apply(target);
+    Map&lt;Method, MethodHandler&gt; methodToHandler = new LinkedHashMap&lt;Method, MethodHandler&gt;();
+    List&lt;DefaultMethodHandler&gt; defaultMethodHandlers = new LinkedList&lt;DefaultMethodHandler&gt;();
+
+    for (Method method : target.type().getMethods()) {
+      if (method.getDeclaringClass() == Object.class) {
+        continue;
+      } else if (Util.isDefault(method)) {
+        DefaultMethodHandler handler = new DefaultMethodHandler(method);
+        defaultMethodHandlers.add(handler);
+        methodToHandler.put(method, handler);
+      } else {
+        methodToHandler.put(method, nameToHandler.get(Feign.configKey(target.type(), method)));
+      }
+    }
+    InvocationHandler handler = factory.create(target, methodToHandler);
+    T proxy = (T) Proxy.newProxyInstance(target.type().getClassLoader(),
+        new Class&lt;?&gt;[] {target.type()}, handler);
+
+    for (DefaultMethodHandler defaultMethodHandler : defaultMethodHandlers) {
+      defaultMethodHandler.bindTo(proxy);
+    }
+    return proxy;
+  }
+  ......
+}
+</code></pre></div></div>
+
+<h3 id="执行逻辑-">执行逻辑 <a href="#pic98" id="pic98"></a></h3>
+
+<p>当 feign 客户端被调用时，先路由找到对应 FeignCircuitBreakerInvocationHandler 执行 invoke 方法（如果没开启 CircuitBreaker 则执行 SynchronousMethodHandler#invoke），如果执行失败则进行重试逻辑，如果重试失败则抛出异常，异常按照 ExceptionPropagationPolicy 策略决定是否拆还原包异常堆栈</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>final class FeignCircuitBreakerInvocationHandler implements MethodHandler {
+    ......
+    @Override
+	public Object invoke(final Object proxy, final Method method, final Object[] args) throws Throwable {
+		// early exit if the invoked method is from java.lang.Object
+		// code is the same as ReflectiveFeign.FeignInvocationHandler
+		if ("equals".equals(method.getName())) {
+			try {
+				Object otherHandler = args.length &gt; 0 &amp;&amp; args[0] != null ? Proxy.getInvocationHandler(args[0]) : null;
+				return equals(otherHandler);
+			}
+			catch (IllegalArgumentException e) {
+				return false;
+			}
+		}
+		else if ("hashCode".equals(method.getName())) {
+			return hashCode();
+		}
+		else if ("toString".equals(method.getName())) {
+			return toString();
+		}
+
+		String circuitName = circuitBreakerNameResolver.resolveCircuitBreakerName(feignClientName, target, method);
+		CircuitBreaker circuitBreaker = circuitBreakerGroupEnabled ? factory.create(circuitName, feignClientName)
+				: factory.create(circuitName);
+		Supplier&lt;Object&gt; supplier = asSupplier(method, args);
+		if (this.nullableFallbackFactory != null) {
+			Function&lt;Throwable, Object&gt; fallbackFunction = throwable -&gt; {
+				Object fallback = this.nullableFallbackFactory.create(throwable);
+				try {
+					return this.fallbackMethodMap.get(method).invoke(fallback, args);
+				}
+				catch (Exception exception) {
+					unwrapAndRethrow(exception);
+				}
+				return null;
+			};
+			return circuitBreaker.run(supplier, fallbackFunction);
+		}
+		return circuitBreaker.run(supplier);
+	}
+    ......
+}
+</code></pre></div></div>
+
+<h2 id="使用技巧-">使用技巧 <a href="#mavd2" id="mavd2"></a></h2>
+
+<h4 id="fegin-远程调用缺少请求头-">Fegin 远程调用缺少请求头 <a href="#fj0av" id="fj0av"></a></h4>
+
+<p>feign 调用接口相当于起了一个新的请求进行，自身不带额外请求头</p>
+
+<p>解决方法自定义 RequestInterceptor 拦截器</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>@Component
+    public class FeignHeadInterceptor implements RequestInterceptor {
+        @Override
+        public void apply(RequestTemplate template) {
+            ServletRequestAttributes requestAttributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (requestAttributes != null) {
+                HttpServletRequest request = requestAttributes.getRequest();
+                Enumeration&lt;String&gt; headers = request.getHeaderNames();
+                if (headers != null) {
+                    while (headers.hasMoreElements()) {
+                        String name = headers.nextElement();
+                        if ("extend-head".equals(name)) {
+                            String value = request.getHeader(name);
+                            template.header(name, value);
+                        } else {
+                            template.header("extend-head", "none");
+                        }
+                    }
+                }
+            }
+        }
+    }
+</code></pre></div></div>
+
+<h3 id="fegin-client-方法存在并发情况导致无法正确设置请求头-">Fegin Client 方法存在并发情况导致无法正确设置请求头 <a href="#dojzx" id="dojzx"></a></h3>
+
+<p>原因：RequestContextHolder.getRequestAttributes() 方法取自 ThreadLocal，不具备传递子线程的特性并发中会丢失。而 RequestContextHolder 中inheritableRequestAttributesHolder 虽然是 InheritableThreadLocal 可以传递给子线程，但是一旦主线程关闭就会回收，这时不能保证子线程已经处理完成，存在缺陷</p>
+
+<p>解决方法：自定义 InheritableThreadLocal 管理 HttpServletRequest</p>
+
+<p>1、自定义 InheritableThreadLocalUtil 管理 HttpServletRequest，这里为了方便仅简单处理，建议在请求访问接口时封装一套子类可继承的 RequestContext 逻辑</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>public class InheritableThreadLocalUtil {
+
+    private static final InheritableThreadLocal&lt;Map&lt;String,Object&gt;&gt; headerMap = new InheritableThreadLocal&lt;Map&lt;String, Object&gt;&gt;(){
+        @Override
+        protected Map&lt;String, Object&gt; initialValue() {
+            return new HashMap&lt;&gt;();
+        }
+    };
+
+    public static Map&lt;String,Object&gt; get(){
+        return headerMap.get();
+    }
+
+    public static Object get(String key) {
+        return headerMap.get().get(key);
+    }
+
+    public static void set(String key, Object value){
+        headerMap.get().put(key,value);
+    }
+}
+</code></pre></div></div>
+
+<p>2、并发 controller 改造</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>@RestController
+@RequestMapping
+public class FindController {
+
+    @Autowired
+    DiscoveryClient discoveryClient;
+
+    @Autowired
+    UserServiceClient serviceClient;
+
+    @RequestMapping("/async")
+    public String Async() {
+        InheritableThreadLocalUtil.set("request", RequestContextHolder.getRequestAttributes());
+        CompletableFuture&lt;String&gt; future = CompletableFuture.supplyAsync(() -&gt; {
+            RequestContextHolder.setRequestAttributes((RequestAttributes)InheritableThreadLocalUtil.get("request"));
+            ServiceInstance serviceInstance = discoveryClient.getInstances("user-service").get(0);
+            return serviceInstance.getServiceId() + " (" + serviceInstance.getHost() + ":" + serviceInstance.getPort() + ")" + "===&gt; " + serviceClient.print();
+        });
+        String response = "";
+        try {
+            response = future.get();
+        } catch (InterruptedException | ExecutionException e) {
+            e.printStackTrace();
+        }
+        return response;
+    }
+}
+</code></pre></div></div>
+
+<h2 id="参考-">参考 <a href="#tdvhu" id="tdvhu"></a></h2>
+
+<p>官方文档 — <a href="https://docs.spring.io/spring-cloud-openfeign/docs/3.1.8/reference/html/#spring-cloud-feign-overriding-defaults">https://docs.spring.io/spring-cloud-openfeign/docs/3.1.8/reference/html/#spring-cloud-feign-overriding-defaults</a></p>]]></content><author><name></name></author><summary type="html"><![CDATA[Spring Cloud openFegin 使用与源码学习]]></summary></entry></feed>
