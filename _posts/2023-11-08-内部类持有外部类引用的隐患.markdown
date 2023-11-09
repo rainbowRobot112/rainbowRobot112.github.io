@@ -1,0 +1,111 @@
+# 内部类持有外部类引用的隐患
+
+非静态内部类中引用外部类实例的非静态字段会导致内存泄漏的风险。因为匿名内部类一直持有外部类引用，存在引用关系是不会被GC回收，当持有外部类引用的非静态内部类处理耗时任务且越来越多的情况就会导致内存泄漏。
+
+### 持有外部类 <a href="#k3qfx" id="k3qfx"></a>
+
+非静态内部类，通过反射方法 clazz.getDeclaredFields() 获取内部类的所有属性时，如果存在外部类实例字段（非静态字段），内部类在将通过 this$0 来定义对外部类的引用，修饰为 final。
+
+1、包含内部类的 User 类
+
+```
+public class User {
+
+    public String id;
+    protected String firstname;
+    int age;
+    private String sex;
+
+    public class Name {
+        String lastname;
+        public String getName() {
+            return User.this.firstname + lastname;
+        }
+    }
+
+    public String getName() {
+        return Name.class.getName();
+    }
+}
+```
+
+2、测试内部类打印全部属性
+
+```
+package test.FieldTest;
+
+import java.lang.reflect.Field;
+
+public class Test {
+
+    public static void main(String[] args) {
+        fieldTest(User.Name.class);
+    }
+
+    public static void fieldTest(Class<?> clazz) {
+        Field[] fields = clazz.getDeclaredFields();
+        for (Field field : fields) {
+            System.out.println(field);
+        }
+    }
+}
+```
+
+输出
+
+```
+java.lang.String test.FieldTest.User$Name.lastname
+final test.FieldTest.User test.FieldTest.User$Name.this$0
+```
+
+查看内部类生成的 class 文件目录
+
+```
+$ ll
+total 9
+-rw-r--r-- 1 root 197121 1142 11月  8 09:53  Test.class
+-rw-r--r-- 1 root 197121  744 11月  8 09:53 'User$Name.class'
+-rw-r--r-- 1 root 197121  568 11月  8 09:53  User.class
+```
+
+编译 User$Name.class 文件
+
+```
+$ javap -c User\$Name.class
+Compiled from "User.java"
+public class test.FieldTest.User$Name {
+  java.lang.String lastname;
+
+  final test.FieldTest.User this$0;
+
+  public test.FieldTest.User$Name(test.FieldTest.User);
+    Code:
+       0: aload_0
+       1: aload_1
+       2: putfield      #1                  // Field this$0:Ltest/FieldTest/User;
+       5: aload_0
+       6: invokespecial #2                  // Method java/lang/Object."<init>":()V
+       9: return
+
+  public java.lang.String getName();
+    Code:
+       0: new           #3                  // class java/lang/StringBuilder
+       3: dup
+       4: invokespecial #4                  // Method java/lang/StringBuilder."<init>":()V
+       7: aload_0
+       8: getfield      #1                  // Field this$0:Ltest/FieldTest/User;
+      11: getfield      #5                  // Field test/FieldTest/User.firstname:Ljava/lang/String;
+      14: invokevirtual #6                  // Method java/lang/StringBuilder.append:(Ljava/lang/String;)Ljava/lang/StringBuilder;
+      17: aload_0
+      18: getfield      #7                  // Field lastname:Ljava/lang/String;
+      21: invokevirtual #6                  // Method java/lang/StringBuilder.append:(Ljava/lang/String;)Ljava/lang/StringBuilder;
+      24: invokevirtual #8                  // Method java/lang/StringBuilder.toString:()Ljava/lang/String;
+      27: areturn
+}
+```
+
+可以看到字节码文件中 User 被内部类 Name 引用，在 Name 构造方法 public test.FieldTest.User$Name(test.FieldTest.User) 阶段将外部类 User 引用导入自身。
+
+### 处理办法 <a href="#ap4an" id="ap4an"></a>
+
+使用静态匿名内部类，内部类是静态的，要求外部类的变量也必须是静态的，静态变量存储在方法区，启动进程时加载，可以直接引用到需要的变量
